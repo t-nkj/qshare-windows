@@ -8,7 +8,7 @@ impl Notifier {
 
     pub fn progress(&self, title: &str, completed: u64, total: u64) {
         let percent = percentage(completed, total);
-        platform::show(title, &format!("{percent}%"), Some(percent));
+        platform::show(title, "全体の進捗", Some(percent));
     }
 
     pub fn success(&self, message: &str) {
@@ -168,7 +168,7 @@ mod platform {
         if let Some(value) = progress {
             match update_progress(value) {
                 Ok(NotificationUpdateResult::Succeeded) => {
-                    crate::logging::debug("Toast progress update succeeded");
+                    crate::logging::debug(&format!("Toast progress update succeeded: {value}%"));
                     return Ok(());
                 }
                 Ok(result) => crate::logging::debug(&format!(
@@ -257,7 +257,7 @@ mod platform {
         )?;
         let _ = values.Insert(
             &HSTRING::from("progressText"),
-            &HSTRING::from(format!("{value}%")),
+            &HSTRING::from(format!("全体 {value}%")),
         )?;
         Ok(data)
     }
@@ -267,7 +267,7 @@ mod platform {
     }
 
     fn group() -> HSTRING {
-        HSTRING::from("qshare")
+        HSTRING::from(format!("qshare-{}", std::process::id()))
     }
 
     fn escape(value: &str) -> String {
