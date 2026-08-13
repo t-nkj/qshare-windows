@@ -42,7 +42,7 @@ fn send_clipboard(api: &ApiClient, notifier: &Notifier) -> Result<()> {
 fn send_files(api: &ApiClient, paths: Vec<PathBuf>, notifier: &Notifier) -> Result<()> {
     let total = files::validate_upload_paths(&paths)?;
     let progress = TransferProgress::new("QShare ファイル送信中", total, notifier.clone());
-    api.upload_files(&paths, |path| {
+    let result = api.upload_files(&paths, |path| {
         let progress = progress.clone();
         let file = files::open_file(path)?;
         Ok(Box::new(files::ProgressReader::new(file, move |bytes| {
@@ -50,6 +50,25 @@ fn send_files(api: &ApiClient, paths: Vec<PathBuf>, notifier: &Notifier) -> Resu
         })))
     })?;
     progress.complete();
+    if !result.failed.is_empty() {
+        let details = result
+            .failed
+            .iter()
+            .map(|failure| {
+                format!(
+                    "{}: {}",
+                    failure.name.as_deref().unwrap_or("不明なファイル"),
+                    failure.error.message
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!(
+            "{} 件送信しましたが、{} 件失敗しました\n{details}",
+            result.created.len(),
+            result.failed.len()
+        );
+    }
     notifier.success(&format!(
         "{} 件のファイルをQShareへ送信しました",
         paths.len()

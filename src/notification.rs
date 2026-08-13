@@ -16,7 +16,7 @@ impl Notifier {
     }
 
     pub fn error(&self, message: &str) {
-        platform::show("QShare エラー", message, None);
+        platform::show_error(message);
     }
 
     pub fn setup_required(&self, env_path: &std::path::Path) {
@@ -38,13 +38,14 @@ mod platform {
         UI::Notifications::{
             NotificationData, NotificationUpdateResult, ToastNotification, ToastNotificationManager,
         },
+        Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
         core::HSTRING,
     };
 
     const APP_ID: &str = "QShare";
 
     pub fn show(title: &str, message: &str, progress: Option<u8>) {
-        if let Err(error) = show_inner(title, message, progress) {
+        if let Err(error) = show_inner(title, message, progress, "transfer") {
             eprintln!("notification error: {error}");
         }
     }
@@ -55,7 +56,24 @@ mod platform {
         }
     }
 
-    fn show_inner(title: &str, message: &str, progress: Option<u8>) -> windows::core::Result<()> {
+    pub fn show_error(message: &str) {
+        let _ = show_inner("QShare エラー", message, None, "error");
+        unsafe {
+            let _ = MessageBoxW(
+                None,
+                &HSTRING::from(message),
+                &HSTRING::from("QShare エラー"),
+                MB_ICONERROR | MB_OK,
+            );
+        }
+    }
+
+    fn show_inner(
+        title: &str,
+        message: &str,
+        progress: Option<u8>,
+        toast_tag: &str,
+    ) -> windows::core::Result<()> {
         if let Some(value) = progress
             && update_progress(value).unwrap_or(NotificationUpdateResult::NotificationNotFound)
                 == NotificationUpdateResult::Succeeded
@@ -77,7 +95,7 @@ mod platform {
         let document = XmlDocument::new()?;
         document.LoadXml(&HSTRING::from(xml))?;
         let toast = ToastNotification::CreateToastNotification(&document)?;
-        toast.SetTag(&tag())?;
+        toast.SetTag(&HSTRING::from(toast_tag))?;
         toast.SetGroup(&group())?;
         if let Some(value) = progress {
             toast.SetData(&progress_data(value)?)?;
@@ -140,6 +158,8 @@ mod platform {
 #[cfg(not(windows))]
 mod platform {
     pub fn show(_title: &str, _message: &str, _progress: Option<u8>) {}
+
+    pub fn show_error(_message: &str) {}
 
     pub fn show_setup(_env_path: &std::path::Path) {}
 }

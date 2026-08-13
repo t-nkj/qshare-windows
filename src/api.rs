@@ -45,6 +45,23 @@ pub struct SharedFile {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UploadResult {
+    pub created: Vec<SharedFile>,
+    pub failed: Vec<UploadFailure>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UploadFailure {
+    pub name: Option<String>,
+    pub error: UploadFailureError,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UploadFailureError {
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ErrorEnvelope {
     error: Option<ApiErrorBody>,
 }
@@ -93,7 +110,7 @@ impl ApiClient {
         ensure_success(response)
     }
 
-    pub fn upload_files<R>(&self, files: &[std::path::PathBuf], reader: R) -> Result<()>
+    pub fn upload_files<R>(&self, files: &[std::path::PathBuf], reader: R) -> Result<UploadResult>
     where
         R: Fn(&Path) -> Result<Box<dyn Read + Send>>,
     {
@@ -118,7 +135,10 @@ impl ApiClient {
         let response = self
             .request(self.client.post(self.endpoint("v1/files")).multipart(form))
             .send()?;
-        ensure_success(response)
+        if !response.status().is_success() {
+            return Err(response_error(response));
+        }
+        response.json().context("ファイル送信結果を読み取れません")
     }
 
     pub fn download_file(&self, id: &str) -> Result<Response> {
