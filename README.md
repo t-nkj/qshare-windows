@@ -41,4 +41,4 @@ cargo clippy --all-targets -- -D warnings
 cargo build --release --locked
 ```
 
-pushごとにGitHub ActionsがWindows releaseビルドを行い、`QShare.exe`をartifactとして保存します。`Cargo.toml` のパッケージバージョンを直前コミットより上げたpushでは、`v<package-version>`タグのGitHub Releaseを作成してEXEを添付します。それ以外のpushでは、`v<package-version>-build.<run-number>`形式のGitタグだけを作成します。
+pushごとにGitHub ActionsがWindows releaseビルドを行い、`QShare.exe`をartifactとして保存します。`Cargo.toml` のパッケージバージョンを直前コミットより上げたpushでは、`v<package-version>`の正式GitHub Releaseを作成してEXEを添付します。それ以外のpushでは、`v<package-version>-build.<run-number>`タグと、EXEを添付したプレリリースを作成します。
