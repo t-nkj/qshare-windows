@@ -1,0 +1,62 @@
+name: Release Windows app
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QShare-windows
+          path: target/release/QShare.exe
+      - name: Check whether the package version was raised
+        id: version
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          current="$(cargo pkgid | sed 's/.*@//')"
+          previous="$(git show "${BEFORE_SHA}:Cargo.toml" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -n 1 || true)"
+          if [ -z "$previous" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "tag=v${current}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$current" = "$previous" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "tag=v${current}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          highest="$(printf '%s\n%s\n' "$previous" "$current" | sort -V | tail -n 1)"
+          if [ "$highest" != "$current" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "tag=v${current}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "tag=v${current}" >> "$GITHUB_OUTPUT"
+      - name: Create build tag
+        if: steps.version.outputs.release != 'true'
+        shell: bash
+        run: |
+          git tag -a "${{ steps.version.outputs.tag }}" -m "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+      - name: Create GitHub Release
+        if: steps.version.outputs.release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" target/release/QShare.exe --target "$GITHUB_SHA" --title "${{ steps.version.outputs.tag }}" --generate-notes
