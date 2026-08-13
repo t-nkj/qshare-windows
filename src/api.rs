@@ -61,17 +61,6 @@ pub struct UploadFailureError {
     pub message: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ErrorEnvelope {
-    error: Option<ApiErrorBody>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApiErrorBody {
-    code: Option<String>,
-    message: Option<String>,
-}
-
 impl ApiClient {
     pub fn new(config: &Config) -> Result<Self> {
         let client = Client::builder()
@@ -175,20 +164,38 @@ fn ensure_success(response: Response) -> Result<()> {
 
 fn response_error(response: Response) -> anyhow::Error {
     let status = response.status();
-    let body = response.json::<ErrorEnvelope>().ok();
-    let message = body
-        .and_then(|body| body.error)
-        .and_then(|error| error.message.or(error.code))
+    let message = response
+        .text()
+        .ok()
+        .as_deref()
+        .and_then(api_error_message)
         .unwrap_or_else(|| format!("QShare API は HTTP {status} を返しました"));
     if status == StatusCode::UNAUTHORIZED {
-        anyhow::anyhow!("トークンが無効です。.env の QSHARE_TOKEN を確認してください")
+        anyhow::anyhow!("トークンが無効です。.env の QSHARE_TOKEN を確認してください: {message}")
     } else {
-        anyhow::anyhow!(message)
+        anyhow::anyhow!("QShare API HTTP {status}: {message}")
     }
+}
+
+fn api_error_message(body: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct ErrorResponse {
+        error: ErrorBody,
+    }
+
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        message: String,
+    }
+
+    serde_json::from_str::<ErrorResponse>(body)
+        .ok()
+        .map(|response| response.error.message)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::api_error_message;
     use crate::config::normalize_api_base_url;
 
     #[test]
@@ -196,6 +203,14 @@ mod tests {
         assert_eq!(
             normalize_api_base_url("https://qshare.trap.show/api/").unwrap(),
             "https://qshare.trap.show/api/"
+        );
+    }
+
+    #[test]
+    fn reads_the_api_error_message() {
+        assert_eq!(
+            api_error_message(r#"{"error":{"message":"Upload limit exceeded"}}"#).as_deref(),
+            Some("Upload limit exceeded")
         );
     }
 }

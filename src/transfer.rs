@@ -45,7 +45,19 @@ fn send_clipboard(api: &ApiClient, notifier: &Notifier) -> Result<()> {
 fn send_files(api: &ApiClient, paths: Vec<PathBuf>, notifier: &Notifier) -> Result<()> {
     crate::logging::info(&format!("{} 件のファイル送信を開始します", paths.len()));
     let total = files::validate_upload_paths(&paths)?;
-    let progress = TransferProgress::new("QShare ファイル送信中", total, notifier.clone());
+    let progress = TransferProgress::new(
+        &file_transfer_title(
+            "送信",
+            paths
+                .first()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .unwrap_or("ファイル"),
+            paths.len(),
+        ),
+        total,
+        notifier.clone(),
+    );
     let result = api.upload_files(&paths, |path| {
         let progress = progress.clone();
         let file = files::open_file(path)?;
@@ -113,7 +125,11 @@ fn receive_files(
         bail!("受信するファイルがありません");
     }
     let total = remote_files.iter().map(|file| file.size).sum();
-    let progress = TransferProgress::new("QShare ファイル受信中", total, notifier.clone());
+    let progress = TransferProgress::new(
+        &file_transfer_title("受信", &remote_files[0].name, remote_files.len()),
+        total,
+        notifier.clone(),
+    );
     for file in &remote_files {
         let destination = files::unique_destination(download_dir, &file.name)?;
         let response = api.download_file(&file.id)?;
@@ -126,6 +142,14 @@ fn receive_files(
         download_dir.display()
     ));
     Ok(())
+}
+
+fn file_transfer_title(operation: &str, first_name: &str, count: usize) -> String {
+    if count <= 1 {
+        format!("{operation}: {first_name}")
+    } else {
+        format!("{operation}: {first_name} ほか {} 件", count - 1)
+    }
 }
 
 #[cfg(windows)]

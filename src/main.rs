@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod api;
+mod build_info;
 mod cli;
 mod config;
 mod files;
@@ -14,7 +15,7 @@ use anyhow::Result;
 fn main() {
     let notifier = Notifier::new();
     if let Err(error) = run(&notifier) {
-        logging::error(&error.to_string());
+        logging::error(&format!("{error:#}"));
         notifier.error(&error.to_string());
     }
 }
@@ -26,7 +27,7 @@ fn run(notifier: &Notifier) -> Result<()> {
     }
     let config = Config::load()?;
     logging::init(config.log_path.as_deref(), config.log_level)?;
-    logging::info("QShare を起動しました");
+    logging::info(&format!("QShare を起動しました: {}", build_info::VERSION));
     if std::env::args_os().len() == 1 {
         notifier.error("--sender または --receiver を指定してください");
         return Ok(());

@@ -166,7 +166,7 @@ mod platform {
         toast_tag: &str,
     ) -> windows::core::Result<()> {
         if let Some(value) = progress {
-            match update_progress(value) {
+            match update_progress(value, title) {
                 Ok(NotificationUpdateResult::Succeeded) => {
                     crate::logging::debug(&format!("Toast progress update succeeded: {value}%"));
                     return Ok(());
@@ -177,16 +177,17 @@ mod platform {
                 Err(error) => log_toast_error("update_progress", &error),
             }
         }
-        let progress_xml = if progress.is_some() {
-            "<progress value=\"{progressValue}\" valueStringOverride=\"{progressText}\"/>"
+        let binding_content = if progress.is_some() {
+            "<progress title=\"{progressTitle}\" value=\"{progressValue}\" valueStringOverride=\"{progressText}\" status=\"{progressStatus}\"/>"
         } else {
-            ""
+            &format!(
+                "<text>{}</text><text>{}</text>",
+                escape(title),
+                escape(message)
+            )
         };
         let xml = format!(
-            "<toast launch=\"qshare\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text>{}</binding></visual></toast>",
-            escape(title),
-            escape(message),
-            progress_xml
+            "<toast><visual><binding template=\"ToastGeneric\">{binding_content}</binding></visual></toast>"
         );
         crate::logging::debug(&format!(
             "Toast XML prepared: kind={toast_tag}, progress={}",
@@ -202,7 +203,7 @@ mod platform {
         toast.SetGroup(&group())?;
         crate::logging::debug("Toast tag and group set");
         if let Some(value) = progress {
-            toast.SetData(&progress_data(value)?)?;
+            toast.SetData(&progress_data(value, title)?)?;
             crate::logging::debug("Toast progress data set");
         }
         let notifier = notifier()?;
@@ -237,8 +238,8 @@ mod platform {
         Ok(())
     }
 
-    fn update_progress(value: u8) -> windows::core::Result<NotificationUpdateResult> {
-        notifier()?.UpdateWithTagAndGroup(&progress_data(value)?, &tag(), &group())
+    fn update_progress(value: u8, title: &str) -> windows::core::Result<NotificationUpdateResult> {
+        notifier()?.UpdateWithTagAndGroup(&progress_data(value, title)?, &tag(), &group())
     }
 
     fn log_toast_error(operation: &str, error: &windows::core::Error) {
@@ -248,9 +249,10 @@ mod platform {
         ));
     }
 
-    fn progress_data(value: u8) -> windows::core::Result<NotificationData> {
+    fn progress_data(value: u8, title: &str) -> windows::core::Result<NotificationData> {
         let data = NotificationData::new()?;
         let values = data.Values()?;
+        let _ = values.Insert(&HSTRING::from("progressTitle"), &HSTRING::from(title))?;
         let _ = values.Insert(
             &HSTRING::from("progressValue"),
             &HSTRING::from(format!("{}", value as f32 / 100.0)),
@@ -259,6 +261,7 @@ mod platform {
             &HSTRING::from("progressText"),
             &HSTRING::from(format!("全体 {value}%")),
         )?;
+        let _ = values.Insert(&HSTRING::from("progressStatus"), &HSTRING::from("転送中"))?;
         Ok(data)
     }
 
