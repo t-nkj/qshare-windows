@@ -60,7 +60,7 @@ mod platform {
             && update_progress(value).unwrap_or(NotificationUpdateResult::NotificationNotFound)
                 == NotificationUpdateResult::Succeeded
         {
-            return;
+            return Ok(());
         }
         let progress_xml = progress
             .map(|_| {
