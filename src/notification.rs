@@ -33,30 +33,130 @@ pub fn percentage(completed: u64, total: u64) -> u8 {
 
 #[cfg(windows)]
 mod platform {
+    use std::sync::OnceLock;
+
     use windows::{
         Data::Xml::Dom::XmlDocument,
         UI::Notifications::{
             NotificationData, NotificationUpdateResult, ToastNotification, ToastNotificationManager,
         },
-        core::HSTRING,
+        Win32::{
+            Storage::EnhancedStorage::PKEY_AppUserModel_ID,
+            System::{
+                Com::{
+                    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+                    IPersistFile,
+                    StructuredStorage::{
+                        PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+                    },
+                },
+                Variant::VT_LPWSTR,
+            },
+            UI::Shell::{IShellLinkW, PropertiesSystem::IPropertyStore},
+        },
+        core::{GUID, HSTRING, Interface, PWSTR},
     };
 
     const APP_ID: &str = "QShare";
+    static SHORTCUT_REGISTERED: OnceLock<()> = OnceLock::new();
+
+    fn notifier() -> windows::core::Result<windows::UI::Notifications::ToastNotifier> {
+        if SHORTCUT_REGISTERED.get().is_none() {
+            ensure_shortcut()?;
+            let _ = SHORTCUT_REGISTERED.set(());
+        }
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))
+    }
+
+    fn ensure_shortcut() -> windows::core::Result<()> {
+        crate::logging::debug("Toast shortcut registration started");
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
+        crate::logging::debug("Toast shortcut COM apartment initialized");
+        let app_data = std::env::var_os("APPDATA").ok_or_else(|| {
+            windows::core::Error::new(
+                windows::core::HRESULT(0x80070002_u32 as i32),
+                "APPDATA is unavailable",
+            )
+        })?;
+        let shortcut_path = std::path::PathBuf::from(app_data)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("QShare.lnk");
+        if shortcut_path.exists() {
+            crate::logging::debug("Toast Start menu shortcut already registered: AUMID=QShare");
+            return Ok(());
+        }
+        let executable = std::env::current_exe().map_err(|error| {
+            windows::core::Error::new(
+                windows::core::HRESULT(0x80004005_u32 as i32),
+                format!("Cannot resolve QShare executable: {error}"),
+            )
+        })?;
+        let shell_link: IShellLinkW = unsafe {
+            CoCreateInstance(
+                &GUID::from_u128(0x00021401_0000_0000_c000_000000000046),
+                None,
+                CLSCTX_INPROC_SERVER,
+            )
+        }?;
+        crate::logging::debug("Toast shortcut ShellLink created");
+        let executable = HSTRING::from(executable.to_string_lossy().as_ref());
+        unsafe { shell_link.SetPath(&executable)? };
+        crate::logging::debug("Toast shortcut target set");
+        let property_store: IPropertyStore = shell_link.cast()?;
+        crate::logging::debug("Toast shortcut property store acquired");
+        let app_id = HSTRING::from(APP_ID);
+        let property_value = string_propvariant(&app_id);
+        unsafe {
+            property_store.SetValue(&PKEY_AppUserModel_ID, &property_value)?;
+            crate::logging::debug("Toast shortcut AUMID property set");
+            property_store.Commit()?;
+        }
+        // The PROPVARIANT borrows the HSTRING buffer; it must not clear that borrowed pointer.
+        std::mem::forget(property_value);
+        crate::logging::debug("Toast shortcut properties committed");
+        let persist_file: IPersistFile = shell_link.cast()?;
+        crate::logging::debug("Toast shortcut persistence interface acquired");
+        let shortcut = HSTRING::from(shortcut_path.to_string_lossy().as_ref());
+        unsafe { persist_file.Save(&shortcut, true)? };
+        crate::logging::debug("Toast Start menu shortcut registered: AUMID=QShare");
+        Ok(())
+    }
+
+    fn string_propvariant(value: &HSTRING) -> PROPVARIANT {
+        PROPVARIANT {
+            Anonymous: PROPVARIANT_0 {
+                Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
+                    vt: VT_LPWSTR,
+                    wReserved1: 0,
+                    wReserved2: 0,
+                    wReserved3: 0,
+                    Anonymous: PROPVARIANT_0_0_0 {
+                        pwszVal: PWSTR(value.as_ptr() as *mut _),
+                    },
+                }),
+            },
+        }
+    }
 
     pub fn show(title: &str, message: &str, progress: Option<u8>) {
         if let Err(error) = show_inner(title, message, progress, "transfer") {
-            eprintln!("notification error: {error}");
+            log_toast_error("show", &error);
         }
     }
 
     pub fn show_setup(env_path: &std::path::Path) {
         if let Err(error) = show_setup_inner(env_path) {
-            eprintln!("notification error: {error}");
+            log_toast_error("show_setup", &error);
         }
     }
 
     pub fn show_error(message: &str) {
-        let _ = show_inner("QShare エラー", message, None, "error");
+        if let Err(error) = show_inner("QShare エラー", message, None, "error") {
+            log_toast_error("show_error", &error);
+        }
     }
 
     fn show_inner(
@@ -65,11 +165,17 @@ mod platform {
         progress: Option<u8>,
         toast_tag: &str,
     ) -> windows::core::Result<()> {
-        if let Some(value) = progress
-            && update_progress(value).unwrap_or(NotificationUpdateResult::NotificationNotFound)
-                == NotificationUpdateResult::Succeeded
-        {
-            return Ok(());
+        if let Some(value) = progress {
+            match update_progress(value) {
+                Ok(NotificationUpdateResult::Succeeded) => {
+                    crate::logging::debug("Toast progress update succeeded");
+                    return Ok(());
+                }
+                Ok(result) => crate::logging::debug(&format!(
+                    "Toast progress update result: {result:?}; creating a new toast"
+                )),
+                Err(error) => log_toast_error("update_progress", &error),
+            }
         }
         let progress_xml = if progress.is_some() {
             "<progress value=\"{progressValue}\" valueStringOverride=\"{progressText}\"/>"
@@ -82,17 +188,28 @@ mod platform {
             escape(message),
             progress_xml
         );
+        crate::logging::debug(&format!(
+            "Toast XML prepared: kind={toast_tag}, progress={}",
+            progress.is_some()
+        ));
         let document = XmlDocument::new()?;
+        crate::logging::debug("Toast XmlDocument created");
         document.LoadXml(&HSTRING::from(xml))?;
+        crate::logging::debug("Toast XML loaded");
         let toast = ToastNotification::CreateToastNotification(&document)?;
-        if progress.is_some() {
-            toast.SetTag(&HSTRING::from(toast_tag))?;
-            toast.SetGroup(&group())?;
-        }
+        crate::logging::debug("Toast notification created");
+        toast.SetTag(&HSTRING::from(toast_tag))?;
+        toast.SetGroup(&group())?;
+        crate::logging::debug("Toast tag and group set");
         if let Some(value) = progress {
             toast.SetData(&progress_data(value)?)?;
+            crate::logging::debug("Toast progress data set");
         }
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?.Show(&toast)
+        let notifier = notifier()?;
+        crate::logging::debug("Toast notifier created: AUMID=QShare");
+        notifier.Show(&toast)?;
+        crate::logging::info(&format!("Toast show succeeded: kind={toast_tag}"));
+        Ok(())
     }
 
     fn show_setup_inner(env_path: &std::path::Path) -> windows::core::Result<()> {
@@ -103,17 +220,32 @@ mod platform {
         let xml = format!(
             "<toast activationType=\"protocol\" launch=\"{file_url}\"><visual><binding template=\"ToastGeneric\"><text>QShareの初期設定が必要です</text><text>.env を編集して QSHARE_TOKEN を設定してください</text></binding></visual><actions><action content=\"編集する\" activationType=\"protocol\" arguments=\"{file_url}\"/></actions></toast>"
         );
+        crate::logging::debug("Setup toast XML prepared: kind=setup, activation=protocol");
         let document = XmlDocument::new()?;
+        crate::logging::debug("Setup toast XmlDocument created");
         document.LoadXml(&HSTRING::from(xml))?;
+        crate::logging::debug("Setup toast XML loaded");
         let toast = ToastNotification::CreateToastNotification(&document)?;
+        crate::logging::debug("Setup toast notification created");
         toast.SetTag(&tag())?;
         toast.SetGroup(&group())?;
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?.Show(&toast)
+        crate::logging::debug("Setup toast tag and group set");
+        let notifier = notifier()?;
+        crate::logging::debug("Setup toast notifier created: AUMID=QShare");
+        notifier.Show(&toast)?;
+        crate::logging::info("Toast show succeeded: kind=setup");
+        Ok(())
     }
 
     fn update_progress(value: u8) -> windows::core::Result<NotificationUpdateResult> {
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?
-            .UpdateWithTagAndGroup(&progress_data(value)?, &tag(), &group())
+        notifier()?.UpdateWithTagAndGroup(&progress_data(value)?, &tag(), &group())
+    }
+
+    fn log_toast_error(operation: &str, error: &windows::core::Error) {
+        crate::logging::error(&format!(
+            "Toast {operation} failed: HRESULT=0x{:08X}, message={error}",
+            error.code().0 as u32
+        ));
     }
 
     fn progress_data(value: u8) -> windows::core::Result<NotificationData> {
@@ -135,7 +267,7 @@ mod platform {
     }
 
     fn group() -> HSTRING {
-        HSTRING::from(format!("qshare-{}", std::process::id()))
+        HSTRING::from("qshare")
     }
 
     fn escape(value: &str) -> String {
