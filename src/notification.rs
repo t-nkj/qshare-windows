@@ -38,7 +38,6 @@ mod platform {
         UI::Notifications::{
             NotificationData, NotificationUpdateResult, ToastNotification, ToastNotificationManager,
         },
-        Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
         core::HSTRING,
     };
 
@@ -58,14 +57,6 @@ mod platform {
 
     pub fn show_error(message: &str) {
         let _ = show_inner("QShare エラー", message, None, "error");
-        unsafe {
-            let _ = MessageBoxW(
-                None,
-                &HSTRING::from(message),
-                &HSTRING::from("QShare エラー"),
-                MB_ICONERROR | MB_OK,
-            );
-        }
     }
 
     fn show_inner(
@@ -80,14 +71,13 @@ mod platform {
         {
             return Ok(());
         }
-        let progress_xml = progress
-            .map(|_| {
-                "<progress value=\"{progressValue}\" valueStringOverride=\"{progressText}\"/>"
-                    .to_owned()
-            })
-            .unwrap_or_default();
+        let progress_xml = if progress.is_some() {
+            "<progress value=\"{progressValue}\" valueStringOverride=\"{progressText}\"/>"
+        } else {
+            ""
+        };
         let xml = format!(
-            "<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text>{}</binding></visual></toast>",
+            "<toast launch=\"qshare\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text>{}</binding></visual></toast>",
             escape(title),
             escape(message),
             progress_xml
@@ -95,8 +85,10 @@ mod platform {
         let document = XmlDocument::new()?;
         document.LoadXml(&HSTRING::from(xml))?;
         let toast = ToastNotification::CreateToastNotification(&document)?;
-        toast.SetTag(&HSTRING::from(toast_tag))?;
-        toast.SetGroup(&group())?;
+        if progress.is_some() {
+            toast.SetTag(&HSTRING::from(toast_tag))?;
+            toast.SetGroup(&group())?;
+        }
         if let Some(value) = progress {
             toast.SetData(&progress_data(value)?)?;
         }

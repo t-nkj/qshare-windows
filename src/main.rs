@@ -22,6 +22,10 @@ fn run(notifier: &Notifier) -> Result<()> {
         notifier.setup_required(&env_path);
         return Ok(());
     }
+    if std::env::args_os().len() == 1 {
+        notifier.error("--sender または --receiver を指定してください");
+        return Ok(());
+    }
     let command = Command::try_parse()?;
     let config = Config::load()?;
     transfer::run(command, config, notifier)
