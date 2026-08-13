@@ -18,6 +18,7 @@ use crate::{
 };
 
 pub fn run(command: Command, config: Config, notifier: &Notifier) -> Result<()> {
+    crate::logging::debug("API クライアントを初期化します");
     let api = ApiClient::new(&config)?;
     match command {
         Command::Sender(paths) if paths.is_empty() => send_clipboard(&api, notifier),
@@ -27,6 +28,7 @@ pub fn run(command: Command, config: Config, notifier: &Notifier) -> Result<()> 
 }
 
 fn send_clipboard(api: &ApiClient, notifier: &Notifier) -> Result<()> {
+    crate::logging::info("クリップボード送信を開始します");
     let mut clipboard = Clipboard::new().context("クリップボードを開けません")?;
     let text = clipboard
         .get_text()
@@ -35,11 +37,13 @@ fn send_clipboard(api: &ApiClient, notifier: &Notifier) -> Result<()> {
         bail!("クリップボードのテキストが空です");
     }
     api.send_memo(&text)?;
+    crate::logging::info("クリップボード送信が完了しました");
     notifier.success("クリップボードの内容をQShareへ送信しました");
     Ok(())
 }
 
 fn send_files(api: &ApiClient, paths: Vec<PathBuf>, notifier: &Notifier) -> Result<()> {
+    crate::logging::info(&format!("{} 件のファイル送信を開始します", paths.len()));
     let total = files::validate_upload_paths(&paths)?;
     let progress = TransferProgress::new("QShare ファイル送信中", total, notifier.clone());
     let result = api.upload_files(&paths, |path| {
@@ -73,10 +77,13 @@ fn send_files(api: &ApiClient, paths: Vec<PathBuf>, notifier: &Notifier) -> Resu
         "{} 件のファイルをQShareへ送信しました",
         paths.len()
     ));
+    crate::logging::info("ファイル送信が完了しました");
     Ok(())
 }
 
 fn receive(api: &ApiClient, download_dir: &std::path::Path, notifier: &Notifier) -> Result<()> {
+    crate::logging::info("最新共有の受信を開始します");
+    crate::logging::debug("最新共有をAPIへ問い合わせます");
     match api.latest()? {
         Latest::Memo { memo } => {
             let mut clipboard = Clipboard::new().context("クリップボードを開けません")?;

@@ -13,6 +13,26 @@ pub struct Config {
     pub token: String,
     pub api_base_url: String,
     pub download_dir: PathBuf,
+    pub log_path: Option<PathBuf>,
+    pub log_level: Option<LogLevel>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LogLevel {
+    Error,
+    Info,
+    Debug,
+}
+
+impl LogLevel {
+    fn parse(value: &str) -> Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "error" => Ok(Self::Error),
+            "info" => Ok(Self::Info),
+            "debug" => Ok(Self::Debug),
+            _ => bail!("QSHARE_LOG_LEVEL は error、info、debug のいずれかで指定してください"),
+        }
+    }
 }
 
 impl Config {
@@ -42,10 +62,35 @@ impl Config {
             Some(path) if !path.is_empty() => PathBuf::from(path),
             _ => Self::executable_dir()?.join("files"),
         };
+        let logging_enabled = match env::var("QSHARE_LOG") {
+            Ok(value) if value.eq_ignore_ascii_case("true") || value == "1" => true,
+            Ok(value)
+                if value.eq_ignore_ascii_case("false") || value == "0" || value.is_empty() =>
+            {
+                false
+            }
+            Ok(_) => bail!("QSHARE_LOG は true または false で指定してください"),
+            Err(env::VarError::NotPresent) => false,
+            Err(error) => return Err(error).context("QSHARE_LOG を読み取れません"),
+        };
+        let log_level = if logging_enabled {
+            match env::var("QSHARE_LOG_LEVEL") {
+                Ok(value) => Some(LogLevel::parse(&value)?),
+                Err(env::VarError::NotPresent) => Some(LogLevel::Info),
+                Err(error) => return Err(error).context("QSHARE_LOG_LEVEL を読み取れません"),
+            }
+        } else {
+            None
+        };
+        let log_path = logging_enabled
+            .then(|| Self::executable_dir().map(|directory| directory.join("qshare.log")))
+            .transpose()?;
         Ok(Self {
             token,
             api_base_url,
             download_dir,
+            log_path,
+            log_level,
         })
     }
 

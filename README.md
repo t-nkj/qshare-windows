@@ -12,9 +12,13 @@
 QSHARE_TOKEN=qsh_replace_me
 API_BASE_URL=https://qshare.trap.show/api/
 # QSHARE_DOWNLOAD_DIR=C:\\path\\to\\custom-folder
+# QSHARE_LOG=true
+# QSHARE_LOG_LEVEL=info
 ```
 
 `API_BASE_URL`は`/api/`までを指定します。クライアントがAPIバージョンの`v1/`を追加します。`QSHARE_DOWNLOAD_DIR`を省略すると、`QShare.exe`と同じフォルダーにある`files/`へ保存します。`files/`は最初の受信時に自動作成されます。
+
+`QSHARE_LOG=true`を設定すると、`QShare.exe`と同じフォルダーへ`qshare.log`を追記します。`QSHARE_LOG_LEVEL`には`error`、`info`（既定）、`debug`を指定できます。ログには処理の開始・完了・エラーだけを記録し、トークン・クリップボード本文・ファイル内容は記録しません。
 
 ## 使い方
 
